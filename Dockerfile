@@ -10,7 +10,9 @@ RUN wget https://github.com/BenLangmead/bowtie2/releases/download/v2.3.2/bowtie2
 
 
 FROM virtool-workflow-standalone
+
 COPY --from=bowtie /build/bowtie2/* /usr/local/bin/
+
 COPY workflow.py .
 
 ENTRYPOINT ["workflow", "--no-uv-loop", "run"]
