@@ -1,8 +1,13 @@
-import pytest
+import shutil
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+import workflow
 from virtool_workflow.fixtures.scope import WorkflowFixtureScope
-from virtool_workflow_runtime.db import VirtoolDatabase
 from virtool_workflow_runtime.config.configuration import db_connection_string, db_name
+from virtool_workflow_runtime.db import VirtoolDatabase
 
 TEST_FILES = Path(__file__).parent / "test_files"
 
@@ -41,8 +46,8 @@ def otu_resource():
     return maps, otus
 
 
-@pytest.fixture(scope="module")
-def fixture_scope(otu_resource):
+@pytest.fixture()
+async def fixture_scope(otu_resource):
     db = VirtoolDatabase(db_name(), db_connection_string())
     jobs, samples, analyses, indexes = db["jobs"], db["samples"], db["analyses"], db["indexes"]
 
@@ -103,12 +108,39 @@ def fixture_scope(otu_resource):
         "baz": 6,
     }
 
+    await scope.get_or_instantiate("temp_path")
+    scope["sample_path"] = scope["temp_path"]/"samples/foobar"
+
     return scope
 
 
+async def test_map_default_isolates(fixture_scope: WorkflowFixtureScope):
+    shutil.copyfile(FASTQ_PATH, fixture_scope["sample_path"]/"reads_1.fq")
 
-def test_map_default_isolates():
-    assert False
+    fixture_scope["reads"] = SimpleNamespace(paths=fixture_scope["analysis_args"].read_paths)
+
+    bound = await fixture_scope.bind(workflow.map_default_isolates)
+    await bound()
+
+    assert sorted(fixture_scope["intermediate"]["to_otus"]) == sorted([
+        "NC_013110",
+        "NC_017938",
+        "NC_006057",
+        "NC_007448",
+        "JQ080272",
+        "NC_001836",
+        "NC_003347",
+        "NC_016509",
+        "NC_017939",
+        "NC_006056",
+        "NC_003623",
+        "KX109927",
+        "NC_016416",
+        "NC_001948",
+        "NC_021148",
+        "NC_003615",
+        "NC_004006"
+    ])
 
 
 def test_generate_isolate_fasta():

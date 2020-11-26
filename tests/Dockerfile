@@ -1,6 +1,9 @@
 # Dockerfile for running `workflow-pathoscope` tests.
 
-FROM python:3.9-buster
+FROM workflow-pathoscope
+
+RUN apt-get update -y
+RUN apt-get install -y gcc python3-dev
 
 WORKDIR test
 
