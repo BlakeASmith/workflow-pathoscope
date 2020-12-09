@@ -4,11 +4,11 @@ FROM workflow-pathoscope
 
 RUN apt-get update -y
 RUN apt-get install -y gcc python3-dev
+RUN pip install pytest pytest-asyncio pytest-aiohttp pytest-cov pytest-xdist
 
 WORKDIR test
 
 COPY . .
-RUN pip install tox
 
-ENTRYPOINT ["tox"]
 
+ENTRYPOINT ["pytest"]
