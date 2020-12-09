@@ -2,8 +2,7 @@ from pathlib import Path
 from typing import Dict, Any, Callable
 
 import pathoscope
-from virtool_workflow import fixture
-from virtool_workflow import step
+from virtool_workflow import fixture, step
 
 # TODO: use `Reads` class that will come in the next virtool_workflow release.
 Reads = Any

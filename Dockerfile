@@ -13,7 +13,10 @@ FROM virtool-workflow-standalone
 
 COPY --from=bowtie /build/bowtie2/* /usr/local/bin/
 
-COPY workflow.py .
+WORKDIR workflow-pathoscope
 
-ENTRYPOINT ["workflow", "--no-uv-loop", "run"]
+COPY workflow.py .
+COPY pathoscope.py .
+
+RUN ls
 

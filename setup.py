@@ -12,7 +12,7 @@ PACKAGES = find_packages(exclude="tests")
 
 
 INSTALL_REQUIRES = [
-    "virtool-workflow==0.1.2",
+    "virtool-workflow==0.2.0",
     "psutil==5.7.0"
 ]
 
