@@ -243,7 +243,7 @@ def subtract_mapping(
         results: Dict[str, Any]
 ):
     target_path = temp_analysis_path/"to_isolates.vta"
-    output_path = "temp_analysis_path"/"subtracted.vta"
+    output_path = temp_analysis_path/"subtracted.vta"
 
     subtracted_count = await pathoscope.subtract(
         target_path,
@@ -262,8 +262,133 @@ def subtract_mapping(
     results["subtracted_count"] = subtracted_count
 
 
+def run_patho(vta_path, reassigned_path):
+    """Run Pathoscope. This function is CPU-intensive and should be run in a separate process."""
+    u, nu, refs, reads = pathoscope.build_matrix(vta_path)
+
+    best_hit_initial_reads, best_hit_initial, level_1_initial, level_2_initial = pathoscope.compute_best_hit(
+        u,
+        nu,
+        refs,
+        reads
+    )
+
+    init_pi, pi, _, nu = pathoscope.em(u, nu, refs, 50, 1e-7, 0, 0)
+
+    best_hit_final_reads, best_hit_final, level_1_final, level_2_final = pathoscope.compute_best_hit(
+        u,
+        nu,
+        refs,
+        reads
+    )
+
+    pathoscope.rewrite_align(u, nu, vta_path, 0.01, reassigned_path)
+
+    return (
+        best_hit_initial_reads,
+        best_hit_initial,
+        level_1_initial,
+        level_2_initial,
+        best_hit_final_reads,
+        best_hit_final,
+        level_1_final,
+        level_2_final,
+        init_pi,
+        pi,
+        refs,
+        reads
+    )
+
+
 @step
-def pathoscope():
-    ...
+def pathoscope(
+        temp_analysis_path: Path,
+        intermediate: Dict[str, Any],
+        results: Dict[str, Any],
+        sequence_otu_map: Dict[str, str],
+        manifest: Dict[str, str],
+        run_in_executor: FunctionExecutor,
+):
+
+    vta_path = temp_analysis_path/"to_isolates.vta"
+    reassigned_path = temp_analysis_path/"reassigned.vta"
+
+    #TODO: Refactor to use dataclass instead of long tuple.
+    (
+        best_hit_initial_reads,
+        best_hit_initial,
+        level_1_initial,
+        level_2_initial,
+        best_hit_final_reads,
+        best_hit_final,
+        level_1_final,
+        level_2_final,
+        init_pi,
+        pi,
+        refs,
+        reads
+    ) = await run_in_executor(
+        run_patho,
+        vta_path,
+        reassigned_path
+    )
+
+    read_count = len(reads)
+
+    report = await run_in_executor(
+        pathoscope.write_report,
+        temp_analysis_path/"report.tsv",
+        pi,
+        refs,
+        read_count,
+        init_pi,
+        best_hit_initial,
+        best_hit_initial_reads,
+        best_hit_final,
+        best_hit_final_reads,
+        level_1_initial,
+        level_2_initial,
+        level_1_final,
+        level_2_final
+    )
+
+    intermediate["coverage"] = await run_in_executor(
+        pathoscope.calculate_coverage,
+        reassigned_path,
+        intermediate["ref_lengths"]
+    )
+
+    results.update({
+        "ready": True,
+        "read_count": read_count,
+        "results": []
+    })
+
+    for ref_id, hit in report.items():
+        # Get the otu info for the sequence id.
+        otu_id = sequence_otu_map[ref_id]
+        otu_version = manifest[otu_id]
+
+        hit["id"] = ref_id
+
+        # Attach "otu" (id, version) to the hit.
+        hit["otu"] = {
+            "version": otu_version,
+            "id": otu_id
+        }
+
+        # Get the coverage for the sequence.
+        hit_coverage = intermediate["coverage"][ref_id]
+
+        # Attach coverage list to hit dict.
+        hit["align"] = hit_coverage
+
+        # Calculate coverage and attach to hit.
+        hit["coverage"] = round(1 - hit_coverage.count(0) / len(hit_coverage), 3)
+
+        # Calculate depth and attach to hit.
+        hit["depth"] = round(sum(hit_coverage) / len(hit_coverage))
+
+        results["results"].append(hit)
 
 
