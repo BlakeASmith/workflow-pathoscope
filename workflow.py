@@ -123,8 +123,66 @@ def build_isolate_index(run_subprocess: RunSubprocess,
 
 
 @step
-def map_isolates():
-    ...
+def map_isolates(
+        number_of_processes: int,
+        temp_analysis_path: Path,
+        reads: Reads,
+        run_subprocess: RunSubprocess
+):
+    command = [
+        "bowtie2",
+        "-p", str(number_of_processes - 1),
+        "--no-unal",
+        "--local",
+        "--score-min", "L,20,1.0",
+        "-N", "0",
+        "-L", "15",
+        "-k", "100",
+        "--al", temp_analysis_path/"mapped.fastq",
+        "-x", temp_analysis_path/"isolates",
+        "-U", ",".join(str(path) for path in reads.paths)
+    ]
+
+    async with aiofiles.open(temp_analysis_path/"to_isolates.vta", "w") as f:
+        async def stdout_handler(line, p_score_cutoff=0.01):
+            line = line.decode()
+
+            if line[0] == "@" or line == "#":
+                return
+
+            fields = line.split("\t")
+
+            # Bitwise FLAG - 0x4 : segment unmapped
+            if int(fields[1]) & 0x4 == 4:
+                return
+
+            ref_id = fields[2]
+
+            if ref_id == "*":
+                return
+
+            p_score = pathoscope.find_sam_align_score(fields)
+
+            # Skip if the p_score does not meet the minimum cutoff.
+            if p_score < p_score_cutoff:
+                return
+
+            read_id = fields[0]
+            read_pos = fields[3]
+            read_length = len(fields[9])
+
+            read_info = [
+                read_id,
+                ref_id,
+                read_pos,
+                str(read_length),
+                str(p_score)
+            ]
+
+            await f.write(f"{','.join(read_info)}\n")
+
+        await run_subprocess(command, stdout_handler=stdout_handler)
+
 
 
 @step
