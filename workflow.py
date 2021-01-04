@@ -1,11 +1,14 @@
+import aiofiles
 from pathlib import Path
 from typing import Dict, Any, Callable
 
 import pathoscope
+import virtool_core.history.db
 from virtool_workflow import fixture, step
+from virtool_workflow.analysis.reads.reads import Reads
+from virtool_workflow.execution.run_subprocess import RunSubprocess
 
-# TODO: use `Reads` class that will come in the next virtool_workflow release.
-Reads = Any
+
 
 
 @fixture
@@ -43,8 +46,8 @@ async def map_default_isolates(
 
         fields = line.split("\t")
 
-        # Bitwise FLAG - 0x4: segment unmapped
-        if int(fields[1]) & 0x4 == 4:
+        segment_unmapped = int(fields[1]) & 0x4 == 4
+        if segment_unmapped:
             return
 
         ref_id = fields[2]
@@ -53,7 +56,8 @@ async def map_default_isolates(
             return
 
         # Skip if the p_score does not meet the minimum cutoff.
-        if pathoscope.find_sam_align_score(fields) < 0.01:
+        p_score = pathoscope.find_sam_align_score(fields)
+        if p_score < 0.01:
             return
 
         to_otus.add(ref_id)
@@ -67,18 +71,55 @@ async def map_default_isolates(
 @step
 def generate_isolate_fasta(
         temp_analysis_path: Path,
-        sequence: Dict
+        sequence_otu_map: Dict,
+        intermediate: Dict,
+        database: Dict,
+        data_path: Path,
 ):
     fasta_path = temp_analysis_path/"isolate_index.fa"
 
-    ref_lengths = {}
+    # The ids of OTUs whose default sequences had mappings.
+    otu_ids = {sequence_otu_map[sequence_id] for sequence_id in intermediate["to_otus"]}
 
+    # Get the database documents for the sequences
+    async with aiofiles.open(fasta_path, "w") as f:
+        # Iterate through each otu id referenced by the hit sequence ids.
+        for otu_id in otu_ids:
+            # TODO: get manifest as fixture
+            otu_version = ...
+            #otu_version = job.params["manifest"][otu_id]
 
+            # TODO: create utility for `patch_do_version`
+            _, patched, _ = await virtool_core.history.db.patch_to_version(
+                database,
+                str(data_path),
+                otu_id,
+                otu_version
+            )
+
+            ref_lengths = {}
+            for isolate in patched["isolates"]:
+                for sequence in isolate["sequences"]:
+                    await f.write(f">{sequence['_id']}\n{sequence['sequence']}\n")
+                    ref_lengths[sequence["_id"]] = len(sequence["sequence"])
+
+    del intermediate["to_otus"]
+
+    intermediate["ref_lengths"] = ref_lengths
 
 
 @step
-def build_isolate_index():
-    ...
+def build_isolate_index(run_subprocess: RunSubprocess,
+                        number_of_processes: int,
+                        temp_analysis_path: Path):
+    command = [
+        "bowtie2-build",
+        "--threads", str(number_of_processes),
+        temp_analysis_path/"isolate_index.fa",
+        temp_analysis_path/"isolates",
+    ]
+
+    await run_subprocess(command)
 
 
 @step
@@ -88,7 +129,6 @@ def map_isolates():
 
 @step
 def map_subtraction():
-    print("1")
     ...
 
 

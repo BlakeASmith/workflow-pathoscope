@@ -8,6 +8,8 @@ import workflow
 from virtool_workflow.fixtures.scope import WorkflowFixtureScope
 from virtool_workflow_runtime.config.configuration import db_connection_string, db_name
 from virtool_workflow_runtime.db import VirtoolDatabase
+from virtool_workflow.storage.paths import temp_path
+from virtool_workflow.analysis.analysis_info import AnalysisInfo
 
 TEST_FILES = Path(__file__).parent / "test_files"
 
@@ -51,7 +53,9 @@ async def fixture_scope(otu_resource):
     db = VirtoolDatabase(db_name(), db_connection_string())
     jobs, samples, analyses, indexes = db["jobs"], db["samples"], db["analyses"], db["indexes"]
 
-    await analyses.insert_one({
+    scope = WorkflowFixtureScope()
+
+    scope["analysis_document"] = {
         "_id": "baz",
         "workflow": "pathoscope_bowtie",
         "ready": False,
@@ -61,10 +65,11 @@ async def fixture_scope(otu_resource):
         "subtraction": {
             "id": "Prunus persica"
         }
-    })
+    }
 
-    await jobs.insert_one({
-        "_id": "foobar",
+    scope["job_id"] = "foobar"
+    scope["job_document"] = {
+        "_id": scope["job_id"],
         "task": "pathoscope_bowtie",
         "args": {
             "sample_id": "foobar",
@@ -74,9 +79,11 @@ async def fixture_scope(otu_resource):
         },
         "proc": 2,
         "mem": 8
-    })
+    }
 
-    await indexes.insert_one({
+    scope["analysis_info"] = AnalysisInfo(scope["job_document"]["sample_id"])
+
+    scope["index_document"] = {
         "_id": "index3",
         "manifest": {
             "foobar": 10,
@@ -84,9 +91,9 @@ async def fixture_scope(otu_resource):
             "baz": 6
         },
         "sequence_otu_map": otu_resource
-    })
+    }
 
-    await samples.insert_one({
+    scope["sample_document"] = {
         "_id": "foobar",
         "paired": False,
         "library_type": "normal",
@@ -97,11 +104,8 @@ async def fixture_scope(otu_resource):
         "subtraction": {
             "id": "Arabidopsis thaliana"
         }
-    })
+    }
 
-    scope = WorkflowFixtureScope()
-
-    scope["job_id"] = "foobar"
     scope["manifest"] = {
         "foobar": 10,
         "reo": 5,
@@ -110,6 +114,9 @@ async def fixture_scope(otu_resource):
 
     await scope.get_or_instantiate("temp_path")
     scope["sample_path"] = scope["temp_path"]/"samples/foobar"
+    scope["sample_path"].mkdir(parents=True)
+
+    await scope.get_or_instantiate("analysis_args")
 
     return scope
 
