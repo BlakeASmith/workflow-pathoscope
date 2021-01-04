@@ -7,6 +7,7 @@ import virtool_core.history.db
 from virtool_workflow import fixture, step
 from virtool_workflow.analysis.reads.reads import Reads
 from virtool_workflow.execution.run_subprocess import RunSubprocess
+from virtool_workflow.execution.run_in_executor import FunctionExecutor
 from virtool_workflow.analysis.subtractions.subtraction import Subtraction
 
 
@@ -18,6 +19,11 @@ def subtraction_ids():
 @fixture
 def otu_ids():
     return set()
+
+
+@fixture
+def intermediate():
+    return {}
 
 
 @step
@@ -229,10 +235,31 @@ def map_subtraction(
     await run_subprocess(command, stdout_handler=stdout_handler)
 
 
-
 @step
-def subtract_mapping():
-    ...
+def subtract_mapping(
+        temp_analysis_path: Path,
+        subtraction_ids: Dict[str, float],
+        run_in_executor: FunctionExecutor,
+        results: Dict[str, Any]
+):
+    target_path = temp_analysis_path/"to_isolates.vta"
+    output_path = "temp_analysis_path"/"subtracted.vta"
+
+    subtracted_count = await pathoscope.subtract(
+        target_path,
+        output_path,
+        subtraction_ids,
+    )
+
+    await run_in_executor(
+        pathoscope.replace_after_subtraction,
+        output_path,
+        target_path
+    )
+
+    del subtraction_ids
+
+    results["subtracted_count"] = subtracted_count
 
 
 @step
