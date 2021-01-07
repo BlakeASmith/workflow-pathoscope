@@ -3,27 +3,28 @@ import os
 import shutil
 import sys
 
+from pathlib import Path
 import pytest
 
 import virtool.jobs.pathoscope
+from virtool_workflow_runtime.db.db import VirtoolDatabase
+from virtool_workflow_runtime.config.configuration import db_name, db_connection_string
 
-TEST_FILES_PATH = os.path.join(sys.path[0], "tests", "test_files")
-PATHOSCOPE_PATH = os.path.join(TEST_FILES_PATH, "pathoscope")
-
-BEST_HIT_PATH = os.path.join(PATHOSCOPE_PATH, "test_files/best_hit")
-RESULTS_PATH = os.path.join(PATHOSCOPE_PATH, "test_files/results.json")
-EM_PATH = os.path.join(PATHOSCOPE_PATH, "test_files/em")
-ISOLATES_VTA_PATH = os.path.join(PATHOSCOPE_PATH, "to_isolates.vta")
-MATRIX_PATH = os.path.join(PATHOSCOPE_PATH, "test_files/ps_matrix")
-REF_LENGTHS_PATH = os.path.join(PATHOSCOPE_PATH, "test_files/ref_lengths.json")
-SAM_PATH = os.path.join(PATHOSCOPE_PATH, "test_files/test_al.sam")
-SCORES = os.path.join(PATHOSCOPE_PATH, "test_files/scores")
-TO_SUBTRACTION_PATH = os.path.join(PATHOSCOPE_PATH, "test_files/to_subtraction.json")
-UNU_PATH = os.path.join(PATHOSCOPE_PATH, "test_files/unu")
-VTA_PATH = os.path.join(PATHOSCOPE_PATH, "test_files/test.vta")
-INDEXES_PATH = os.path.join(TEST_FILES_PATH, "test_files/index")
-FASTQ_PATH = os.path.join(TEST_FILES_PATH, "test_files/test.fq")
-HOST_PATH = os.path.join(TEST_FILES_PATH, "test_files/index", "host")
+TEST_FILES_PATH = Path("test_files")
+BEST_HIT_PATH = TEST_FILES_PATH / "best_hit"
+RESULTS_PATH = TEST_FILES_PATH/"results.json"
+EM_PATH = TEST_FILES_PATH/"em"
+ISOLATES_VTA_PATH = TEST_FILES_PATH/"to_isolates.vta"
+MATRIX_PATH = TEST_FILES_PATH/"ps_matrix"
+REF_LENGTHS_PATH = TEST_FILES_PATH/"ref_lengths.json"
+SAM_PATH = TEST_FILES_PATH/"test_al.sam"
+SCORES = TEST_FILES_PATH/"scores"
+TO_SUBTRACTION_PATH = TEST_FILES_PATH/"to_subtraction.json"
+UNU_PATH = TEST_FILES_PATH/"unu"
+VTA_PATH = TEST_FILES_PATH/"test.vta"
+INDEXES_PATH = TEST_FILES_PATH/"index"
+FASTQ_PATH = TEST_FILES_PATH/"test.fq"
+HOST_PATH = str(INDEXES_PATH/"host")
 
 
 @pytest.fixture(scope="session")
@@ -47,22 +48,13 @@ def otu_resource():
     return map_dict, otus
 
 
-@pytest.fixture
-async def mock_job(tmpdir, dbi, test_db_connection_string, test_db_name, otu_resource):
-    # Add logs path.
-    tmpdir.mkdir("logs").mkdir("jobs")
-
-    # Add sample path.
-    tmpdir.mkdir("samples").mkdir("foobar").mkdir("analysis")
-
-    settings = {
-        "data_path": str(tmpdir),
-        "db_name": test_db_name
-    }
+@pytest.fixture(scope="session", autouse=True)
+def db(otu_resource):
+    db = VirtoolDatabase(db_name(), db_connection_string())
 
     sequence_otu_map, _ = otu_resource
 
-    await dbi.analyses.insert_one({
+    await db["analyses"].insert_one({
         "_id": "baz",
         "workflow": "pathoscope_bowtie",
         "ready": False,
@@ -74,7 +66,7 @@ async def mock_job(tmpdir, dbi, test_db_connection_string, test_db_name, otu_res
         }
     })
 
-    await dbi.jobs.insert_one({
+    await db["jobs"].insert_one({
         "_id": "foobar",
         "task": "pathoscope_bowtie",
         "args": {
@@ -87,7 +79,7 @@ async def mock_job(tmpdir, dbi, test_db_connection_string, test_db_name, otu_res
         "mem": 8
     })
 
-    await dbi.indexes.insert_one({
+    await db["indexes"].insert_one({
         "_id": "index3",
         "manifest": {
             "foobar": 10,
@@ -97,7 +89,7 @@ async def mock_job(tmpdir, dbi, test_db_connection_string, test_db_name, otu_res
         "sequence_otu_map": sequence_otu_map
     })
 
-    await dbi.samples.insert_one({
+    await db["indexes"].insert_one({
         "_id": "foobar",
         "paired": False,
         "library_type": "normal",
@@ -110,39 +102,11 @@ async def mock_job(tmpdir, dbi, test_db_connection_string, test_db_name, otu_res
         }
     })
 
-    job = virtool.jobs.pathoscope.create()
-
-    job.db = dbi
-    job.id = "foobar"
-    job.mem = 4
-    job.proc = 1
-    job.settings = settings
-
-    job.params = {
-        "analysis_id": "baz",
-        "analysis_path": os.path.join(str(tmpdir), "samples", "foobar", "analysis", "baz"),
-        "index_path": os.path.join(INDEXES_PATH, "reference"),
-        "manifest": {
-            "foobar": 10,
-            "reo": 5,
-            "baz": 6
-        },
-        "read_paths": [
-            os.path.join(str(tmpdir), "samples", "foobar", "reads_1.fq")
-        ],
-        "sample_id": "foobar",
-        "sample_path": os.path.join(str(tmpdir), "samples", "foobar"),
-        "subtraction_path": HOST_PATH,
-        "temp_analysis_path": os.path.join(str(tmpdir), "temp", "temp_analysis")
-    }
-
-    os.makedirs(job.params["temp_analysis_path"])
-
-    return job
+    return db
 
 
 async def test_map_default_isolates(tmpdir, mock_job):
-    shutil.copyfile(FASTQ_PATH, os.path.join(str(tmpdir), "samples", "foobar", "reads_1.fq"))
+    shutil.copyfile(FASTQ_PATH, Path(str(tmpdir), "samples", "foobar", "reads_1.fq"))
 
     await virtool.jobs.pathoscope.map_default_isolates(mock_job)
 
@@ -168,22 +132,22 @@ async def test_map_default_isolates(tmpdir, mock_job):
 
 
 async def test_map_isolates(snapshot, tmpdir, dbs, mock_job):
-    shutil.copyfile(FASTQ_PATH, os.path.join(str(tmpdir), "samples", "foobar", "reads_1.fq"))
+    shutil.copyfile(FASTQ_PATH, Path(str(tmpdir), "samples", "foobar", "reads_1.fq"))
 
-    sample_path = os.path.join(str(tmpdir), "samples", "foobar")
+    sample_path = Path(str(tmpdir), "samples", "foobar")
 
     for filename in os.listdir(INDEXES_PATH):
         if "reference" in filename:
             shutil.copyfile(
-                os.path.join(INDEXES_PATH, filename),
-                os.path.join(mock_job.params["temp_analysis_path"], filename.replace("reference", "isolates"))
+                Path(INDEXES_PATH, filename),
+                Path(mock_job.params["temp_analysis_path"], filename.replace("reference", "isolates"))
             )
 
     mock_job.proc = 2
 
     await virtool.jobs.pathoscope.map_isolates(mock_job)
 
-    vta_path = os.path.join(mock_job.params["temp_analysis_path"], "to_isolates.vta")
+    vta_path = Path(mock_job.params["temp_analysis_path"], "to_isolates.vta")
 
     with open(vta_path, "r") as f:
         data = sorted([line.rstrip() for line in f])
@@ -194,7 +158,7 @@ async def test_map_subtraction(snapshot, dbs, mock_job):
     mock_job.proc = 2
     mock_job.params["subtraction_path"] = HOST_PATH
 
-    shutil.copyfile(FASTQ_PATH, os.path.join(mock_job.params["temp_analysis_path"], "mapped.fastq"))
+    shutil.copyfile(FASTQ_PATH, Path(mock_job.params["temp_analysis_path"], "mapped.fastq"))
 
     await virtool.jobs.pathoscope.map_subtraction(mock_job)
 
@@ -207,7 +171,7 @@ async def test_subtract_mapping(dbs, mock_job):
     with open(TO_SUBTRACTION_PATH, "r") as handle:
         mock_job.intermediate["to_subtraction"] = json.load(handle)
 
-    shutil.copyfile(VTA_PATH, os.path.join(mock_job.params["temp_analysis_path"], "to_isolates.vta"))
+    shutil.copyfile(VTA_PATH, Path(mock_job.params["temp_analysis_path"], "to_isolates.vta"))
 
     await virtool.jobs.pathoscope.subtract_mapping(mock_job)
 
@@ -220,7 +184,7 @@ async def test_pathoscope(snapshot, mock_job):
 
     shutil.copyfile(
         VTA_PATH,
-        os.path.join(mock_job.params["temp_analysis_path"], "to_isolates.vta")
+        Path(mock_job.params["temp_analysis_path"], "to_isolates.vta")
     )
 
     mock_job.params["sequence_otu_map"] = {
@@ -253,11 +217,11 @@ async def test_pathoscope(snapshot, mock_job):
 
     await virtool.jobs.pathoscope.pathoscope(mock_job)
 
-    with open(os.path.join(mock_job.params["temp_analysis_path"], "reassigned.vta"), "r") as f:
+    with open(Path(mock_job.params["temp_analysis_path"], "reassigned.vta"), "r") as f:
         data = sorted([line.rstrip() for line in f])
         snapshot.assert_match(data)
 
-    with open(os.path.join(mock_job.params["temp_analysis_path"], "test_files/report.tsv"), "r") as f:
+    with open(Path(mock_job.params["temp_analysis_path"], "test_files/report.tsv"), "r") as f:
         data = sorted([line.rstrip() for line in f])
         snapshot.assert_match(data)
 
