@@ -97,7 +97,7 @@ def generate_isolate_fasta(
             otu_version = ...
             #otu_version = job.params["manifest"][otu_id]
 
-            # TODO: create utility for `patch_do_version`
+            # TODO: create utility for `patch_to_version`
             _, patched, _ = await virtool_core.history.db.patch_to_version(
                 database,
                 str(data_path),
