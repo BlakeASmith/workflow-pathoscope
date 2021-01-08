@@ -1,12 +1,12 @@
 import json
 import os
 import shutil
-import sys
+import workflow
 
 from pathlib import Path
 import pytest
 
-import virtool.jobs.pathoscope
+from virtool_workflow import WorkflowFixtureScope
 from virtool_workflow_runtime.db.db import VirtoolDatabase
 from virtool_workflow_runtime.config.configuration import db_name, db_connection_string
 
@@ -28,11 +28,16 @@ HOST_PATH = str(INDEXES_PATH/"host")
 
 
 @pytest.fixture(scope="session")
-def otu_resource():
-    map_dict = dict()
-    otus = dict()
+def scope():
+    with WorkflowFixtureScope() as _scope:
+        yield _scope
 
-    with open(VTA_PATH, "r") as handle:
+
+@pytest.fixture(scope="session")
+def otu_resource():
+    map_dict, otus = {}, {}
+
+    with VTA_PATH.open("r") as handle:
         for line in handle:
             ref_id = line.split(",")[1]
 
@@ -105,12 +110,23 @@ def db(otu_resource):
     return db
 
 
-async def test_map_default_isolates(tmpdir, mock_job):
-    shutil.copyfile(FASTQ_PATH, Path(str(tmpdir), "samples", "foobar", "reads_1.fq"))
+@pytest.fixture
+async def sample_path(scope) -> Path:
+    return await scope.get_or_instantiate("sample_path")
 
-    await virtool.jobs.pathoscope.map_default_isolates(mock_job)
 
-    assert sorted(mock_job.intermediate["to_otus"]) == sorted([
+@pytest.fixture
+async def analysis_work_path(scope) -> Path:
+    return await scope.get_or_instantiate("analysis_work_path")
+
+
+async def test_map_default_isolates(scope: WorkflowFixtureScope, sample_path: Path):
+    shutil.copyfile(FASTQ_PATH, sample_path/"reads_1.fq")
+
+    map_default_isolates = await scope.bind(workflow.map_default_isolates)
+    await map_default_isolates()
+
+    assert sorted(scope["otu_ids"]) == sorted([
         "NC_013110",
         "NC_017938",
         "NC_006057",
@@ -131,63 +147,68 @@ async def test_map_default_isolates(tmpdir, mock_job):
     ])
 
 
-async def test_map_isolates(snapshot, tmpdir, dbs, mock_job):
-    shutil.copyfile(FASTQ_PATH, Path(str(tmpdir), "samples", "foobar", "reads_1.fq"))
+async def test_map_isolates(snapshot, scope, sample_path: Path):
+    shutil.copyfile(FASTQ_PATH, sample_path/"reads_1.fq")
 
-    sample_path = Path(str(tmpdir), "samples", "foobar")
+    analysis_work_path = await scope.get_or_instantiate("analysis_work_path")
 
     for filename in os.listdir(INDEXES_PATH):
         if "reference" in filename:
             shutil.copyfile(
                 Path(INDEXES_PATH, filename),
-                Path(mock_job.params["temp_analysis_path"], filename.replace("reference", "isolates"))
+                Path(analysis_work_path, filename.replace("reference", "isolates"))
             )
 
-    mock_job.proc = 2
+    scope["number_of_processes"] = 2
 
-    await virtool.jobs.pathoscope.map_isolates(mock_job)
+    map_isolates = await scope.bind(workflow.map_isolates)
+    await map_isolates()
 
-    vta_path = Path(mock_job.params["temp_analysis_path"], "to_isolates.vta")
+    vta_path = analysis_work_path/"to_isolates.vta"
 
-    with open(vta_path, "r") as f:
+    with vta_path.open("r") as f:
         data = sorted([line.rstrip() for line in f])
         snapshot.assert_match(data, "isolates")
 
 
-async def test_map_subtraction(snapshot, dbs, mock_job):
-    mock_job.proc = 2
-    mock_job.params["subtraction_path"] = HOST_PATH
+async def test_map_subtraction(snapshot, scope):
+    scope["number_of_processes"] = True
+    scope["subtraction_path"] = HOST_PATH
 
-    shutil.copyfile(FASTQ_PATH, Path(mock_job.params["temp_analysis_path"], "mapped.fastq"))
+    analysis_work_path: Path = await scope.get_or_instantiate("analysis_work_path")
 
-    await virtool.jobs.pathoscope.map_subtraction(mock_job)
+    shutil.copyfile(FASTQ_PATH, analysis_work_path/"mapped.fastq")
 
-    sorted_lines = sorted(mock_job.intermediate["to_subtraction"])
+    map_subtraction = await scope.bind(workflow.map_subtraction)
+    map_subtraction()
+
+    sorted_lines = sorted(scope["subtraction_ids"])
 
     snapshot.assert_match(sorted_lines, "subtraction")
 
 
-async def test_subtract_mapping(dbs, mock_job):
-    with open(TO_SUBTRACTION_PATH, "r") as handle:
-        mock_job.intermediate["to_subtraction"] = json.load(handle)
+async def test_subtract_mapping(scope, analysis_work_path: Path):
+    with TO_SUBTRACTION_PATH.open("r") as handle:
+        scope["subtraction_ids"] = json.load(handle)
 
-    shutil.copyfile(VTA_PATH, Path(mock_job.params["temp_analysis_path"], "to_isolates.vta"))
+    shutil.copyfile(VTA_PATH, analysis_work_path/"to_isolates.vta")
 
-    await virtool.jobs.pathoscope.subtract_mapping(mock_job)
+    subtract_mapping = await scope.bind(workflow.subtract_mapping)
+    await subtract_mapping()
 
-    assert mock_job.results["subtracted_count"] == 4
+    assert scope["results"]["subtracted_count"] == 4
 
 
-async def test_pathoscope(snapshot, mock_job):
+async def test_pathoscope(snapshot, analysis_work_path: Path, scope):
     with open(REF_LENGTHS_PATH, "r") as handle:
-        mock_job.intermediate["ref_lengths"] = json.load(handle)
+        scope["intermediate"]["ref_lengths"] = json.load(handle)
 
     shutil.copyfile(
         VTA_PATH,
-        Path(mock_job.params["temp_analysis_path"], "to_isolates.vta")
+        analysis_work_path / "to_isolates.vta"
     )
 
-    mock_job.params["sequence_otu_map"] = {
+    scope["sequence_otu_map"] = {
         "NC_016509": "foobar",
         "NC_001948": "foobar",
         "13TF149_Reovirus_TF1_Seg06": "reo",
@@ -215,27 +236,16 @@ async def test_pathoscope(snapshot, mock_job):
         "NC_007448": "foobar"
     }
 
-    await virtool.jobs.pathoscope.pathoscope(mock_job)
+    pathoscope = await scope.bind(workflow.pathoscope)
+    await pathoscope()
 
-    with open(Path(mock_job.params["temp_analysis_path"], "reassigned.vta"), "r") as f:
+    with (analysis_work_path/"reassigned.vta").open("r") as f:
         data = sorted([line.rstrip() for line in f])
         snapshot.assert_match(data)
 
-    with open(Path(mock_job.params["temp_analysis_path"], "test_files/report.tsv"), "r") as f:
+    with (analysis_work_path/"report.tsv").open("r") as f:
         data = sorted([line.rstrip() for line in f])
         snapshot.assert_match(data)
 
-    snapshot.assert_match(mock_job.results)
+    snapshot.assert_match(scope["results"])
 
-
-async def test_import_results(snapshot, dbi, mock_job):
-    mock_job.results = {
-        "results": "results will be here",
-        "read_count": 1337,
-        "ready": True
-    }
-
-    await virtool.jobs.pathoscope.import_results(mock_job)
-
-    snapshot.assert_match(await dbi.analyses.find_one())
-    snapshot.assert_match(await dbi.samples.find_one())

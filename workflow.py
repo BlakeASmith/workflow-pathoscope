@@ -26,6 +26,13 @@ def intermediate():
     return {}
 
 
+@fixture
+def analysis_work_path(work_path: Path, job_args: Dict[str, Any]):
+    path = work_path/f"analysis/{job_args['analysis_id']}"
+    path.mkdir(parents=True)
+    return path
+
+
 @step
 async def map_default_isolates(
         proc: int,
@@ -133,7 +140,7 @@ def build_isolate_index(run_subprocess: RunSubprocess,
 @step
 def map_isolates(
         number_of_processes: int,
-        temp_analysis_path: Path,
+        analysis_work_path: Path,
         reads: Reads,
         run_subprocess: RunSubprocess
 ):
@@ -146,12 +153,12 @@ def map_isolates(
         "-N", "0",
         "-L", "15",
         "-k", "100",
-        "--al", temp_analysis_path/"mapped.fastq",
-        "-x", temp_analysis_path/"isolates",
+        "--al", analysis_work_path/"mapped.fastq",
+        "-x", analysis_work_path/"isolates",
         "-U", ",".join(str(path) for path in reads.paths)
     ]
 
-    async with aiofiles.open(temp_analysis_path/"to_isolates.vta", "w") as f:
+    async with aiofiles.open(analysis_work_path/"to_isolates.vta", "w") as f:
         async def stdout_handler(line, p_score_cutoff=0.01):
             line = line.decode()
 
