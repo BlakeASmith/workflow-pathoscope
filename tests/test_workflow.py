@@ -54,7 +54,7 @@ def otu_resource():
 
 
 @pytest.fixture(scope="session", autouse=True)
-def db(otu_resource):
+async def db(otu_resource):
     db = VirtoolDatabase(db_name(), db_connection_string())
 
     sequence_otu_map, _ = otu_resource

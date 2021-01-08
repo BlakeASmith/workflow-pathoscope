@@ -83,7 +83,8 @@ async def map_default_isolates(
 
 
 @step
-def generate_isolate_fasta(
+async def generate_isolate_fasta(
+        job_args: Dict[str, Any],
         temp_analysis_path: Path,
         sequence_otu_map: Dict,
         database: Dict,
@@ -100,9 +101,7 @@ def generate_isolate_fasta(
     async with aiofiles.open(fasta_path, "w") as f:
         # Iterate through each otu id referenced by the hit sequence ids.
         for otu_id in otu_ids:
-            # TODO: get manifest as fixture
-            otu_version = ...
-            #otu_version = job.params["manifest"][otu_id]
+            otu_version = job_args["manifest"][otu_id]
 
             # TODO: create utility for `patch_to_version`
             _, patched, _ = await virtool_core.history.db.patch_to_version(
@@ -124,7 +123,7 @@ def generate_isolate_fasta(
 
 
 @step
-def build_isolate_index(run_subprocess: RunSubprocess,
+async def build_isolate_index(run_subprocess: RunSubprocess,
                         number_of_processes: int,
                         temp_analysis_path: Path):
     command = [
@@ -138,7 +137,7 @@ def build_isolate_index(run_subprocess: RunSubprocess,
 
 
 @step
-def map_isolates(
+async def map_isolates(
         number_of_processes: int,
         analysis_work_path: Path,
         reads: Reads,
@@ -205,7 +204,7 @@ def subtraction(subtractions):
 
 
 @step
-def map_subtraction(
+async def map_subtraction(
         number_of_processes: int,
         subtraction: Subtraction,
         temp_analysis_path: Path,
@@ -243,33 +242,33 @@ def map_subtraction(
 
 
 @step
-def subtract_mapping(
-        temp_analysis_path: Path,
+async def subtract_mapping(
+        analysis_work_path: Path,
         subtraction_ids: Dict[str, float],
-        run_in_executor: FunctionExecutor,
+        # run_in_executor: FunctionExecutor,
         results: Dict[str, Any]
 ):
-    target_path = temp_analysis_path/"to_isolates.vta"
-    output_path = temp_analysis_path/"subtracted.vta"
 
     subtracted_count = await pathoscope.subtract(
-        target_path,
-        output_path,
+        analysis_work_path,
         subtraction_ids,
     )
 
-    await run_in_executor(
-        pathoscope.replace_after_subtraction,
-        output_path,
-        target_path
-    )
+    # target_path = analysis_work_path / "to_isolates.vta"
+    # output_path = analysis_work_path / "subtracted.vta"
+    #
+    # await run_in_executor(
+    #     pathoscope.replace_after_subtraction,
+    #     output_path,
+    #     target_path
+    # )
 
     del subtraction_ids
 
     results["subtracted_count"] = subtracted_count
 
 
-def run_patho(vta_path, reassigned_path):
+async def run_patho(vta_path, reassigned_path):
     """Run Pathoscope. This function is CPU-intensive and should be run in a separate process."""
     u, nu, refs, reads = pathoscope.build_matrix(vta_path)
 
@@ -308,8 +307,8 @@ def run_patho(vta_path, reassigned_path):
 
 
 @step
-def pathoscope(
-        temp_analysis_path: Path,
+async def pathoscope(
+        analysis_work_path: Path,
         intermediate: Dict[str, Any],
         results: Dict[str, Any],
         sequence_otu_map: Dict[str, str],
@@ -317,8 +316,8 @@ def pathoscope(
         run_in_executor: FunctionExecutor,
 ):
 
-    vta_path = temp_analysis_path/"to_isolates.vta"
-    reassigned_path = temp_analysis_path/"reassigned.vta"
+    vta_path = analysis_work_path / "to_isolates.vta"
+    reassigned_path = analysis_work_path / "reassigned.vta"
 
     #TODO: Refactor to use dataclass instead of long tuple.
     (
@@ -344,7 +343,7 @@ def pathoscope(
 
     report = await run_in_executor(
         pathoscope.write_report,
-        temp_analysis_path/"report.tsv",
+        analysis_work_path / "report.tsv",
         pi,
         refs,
         read_count,
